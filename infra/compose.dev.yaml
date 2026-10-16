@@ -1,0 +1,108 @@
+name: aion-dev
+
+x-backend: &backend
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  environment: &backend-env
+    AION_ENVIRONMENT: development
+    AION_DB_HOST: postgres
+    AION_DB_PORT: 5432
+    AION_DB_NAME: aion
+    AION_DB_USER: aion_runtime
+    AION_DB_PASSWORD: ${AION_DB_PASSWORD:-local_runtime_password}
+    AION_REDIS_URL: redis://redis:6379/0
+    AION_RESULT_BACKEND: redis://redis:6379/1
+    AION_LOG_LEVEL: ${AION_LOG_LEVEL:-INFO}
+    AION_SCHEDULER_INTERVAL_SECONDS: ${AION_SCHEDULER_INTERVAL_SECONDS:-10}
+    AION_HEARTBEAT_MAX_AGE_SECONDS: ${AION_HEARTBEAT_MAX_AGE_SECONDS:-45}
+  volumes:
+    - ../backend/src:/app/src
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: aion
+      POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:-local_bootstrap_password}
+      AION_DB_PASSWORD: ${AION_DB_PASSWORD:-local_runtime_password}
+      AION_DB_MIGRATION_PASSWORD: ${AION_DB_MIGRATION_PASSWORD:-local_migration_password}
+    ports:
+      - 127.0.0.1:${AION_DB_PORT:-5432}:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d aion"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - 127.0.0.1:6379:6379
+    command: [redis-server, --appendonly, "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      AION_DB_MIGRATION_USER: aion_migrator
+      AION_DB_MIGRATION_PASSWORD: ${AION_DB_MIGRATION_PASSWORD:-local_migration_password}
+    command: [uv, run, --no-sync, alembic, upgrade, head]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *backend
+    command: [uv, run, --no-sync, uvicorn, "aion.app:create_app", --factory, --host, 0.0.0.0, --port, "8000", --reload]
+    ports:
+      - 127.0.0.1:${AION_API_PORT:-8000}:8000
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 12
+
+  worker:
+    <<: *backend
+    command: [uv, run, --no-sync, celery, -A, "aion.jobs.celery_app:celery_app", worker, --loglevel, INFO, --queues, system, --concurrency, "1"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  scheduler:
+    <<: *backend
+    command: [uv, run, --no-sync, aion-scheduler]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      AION_API_PROXY_TARGET: http://api:8000
+    ports:
+      - 127.0.0.1:${AION_WEB_PORT:-5173}:5173
+    volumes:
+      - ../frontend/src:/app/src
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  postgres-data:
+  redis-data:
