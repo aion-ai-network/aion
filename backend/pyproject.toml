@@ -9,13 +9,18 @@ description = "AION application API and background processes"
 requires-python = ">=3.13,<3.15"
 dependencies = [
   "alembic>=1.17,<2",
+  "argon2-cffi>=25.1,<26",
   "celery[redis]>=5.6,<6",
   "fastapi>=0.119,<1",
+  "email-validator>=2.3,<3",
   "pydantic-settings>=2.11,<3",
   "psycopg[binary]>=3.2.12,<4",
   "redis>=6.4,<8",
   "sqlalchemy[asyncio]>=2.0.44,<2.1",
   "uvicorn[standard]>=0.38,<1",
+  "httpx>=0.28,<1",
+  "boto3>=1.40,<2",
+  "pywebpush>=2.0,<3",
 ]
 
 [dependency-groups]
@@ -29,6 +34,8 @@ dev = [
 
 [project.scripts]
 aion-scheduler = "aion.jobs.scheduler:main"
+aion-admin = "aion.modules.identity.cli:main"
+aion-ops = "aion.operations:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aion"]
@@ -43,6 +50,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["integration: requires an isolated PostgreSQL database and Redis"]
 
 [tool.mypy]
 python_version = "3.13"
@@ -52,5 +60,5 @@ disallow_untyped_defs = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["celery", "celery.*"]
+module = ["celery", "celery.*", "boto3", "pywebpush"]
 ignore_missing_imports = true

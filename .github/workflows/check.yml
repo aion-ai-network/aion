@@ -1,4 +1,4 @@
-name: Check scaffold
+name: Check AION
 on: [push, pull_request]
 permissions:
   contents: read
@@ -25,11 +25,17 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
       - name: Check backend
         run: |
-          uv run --locked --project backend ruff check backend/src backend/tests
+          uv run --locked --project backend ruff check backend/src backend/tests backend/migrations
           uv run --locked --project backend mypy --config-file backend/pyproject.toml backend/src/aion
           uv run --locked --project backend pytest backend/tests
       - name: Build frontend
         run: pnpm --dir frontend build
+      - name: Check application and PostgreSQL isolation
+        run: uv run --locked --project backend python infra/scripts/check_identity.py
+      - name: Build production web
+        run: |
+          docker build -f frontend/Dockerfile -t aion-web-check frontend
+          docker run --rm -e AION_DOMAIN=localhost aion-web-check caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Start runtime
         run: docker compose -f infra/compose.dev.yaml up --build -d
       - name: Verify real runtime

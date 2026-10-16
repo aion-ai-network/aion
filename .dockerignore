@@ -14,3 +14,4 @@
 .cache
 .tools
 .pnpm-store
+.data

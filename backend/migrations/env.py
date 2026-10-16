@@ -1,10 +1,9 @@
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from aion.db.models import Base
 from aion.settings import get_settings
 
-target_metadata = Base.metadata
+target_metadata = None  # Schema changes are explicit SQL migrations, without ORM metadata.
 url = get_settings().migration_database_url
 
 if context.is_offline_mode():

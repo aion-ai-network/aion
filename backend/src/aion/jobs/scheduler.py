@@ -27,8 +27,9 @@ def main() -> None:
     while not stopped.is_set():
         try:
             with sync_connection(settings) as connection:
-                acquired = connection.scalar(text("SELECT pg_try_advisory_lock(:key)"),
-                                             {"key": LOCK_ID})
+                acquired = connection.scalar(
+                    text("SELECT pg_try_advisory_lock(:key)"), {"key": LOCK_ID}
+                )
                 connection.commit()
                 if not acquired:
                     logger.info("Another scheduler holds the leader lock")
@@ -39,6 +40,29 @@ def main() -> None:
                         record_heartbeat(connection, "scheduler", gethostname())
                         connection.commit()
                         celery_app.send_task("aion.system.probe", expires=30, retry=False)
+                        for queue in ("ai", "delivery"):
+                            celery_app.send_task(
+                                "aion.system.queue_probe",
+                                args=[f"worker_{queue}"],
+                                queue=queue,
+                                expires=30,
+                                retry=False,
+                            )
+                        claimed = connection.execute(text("SELECT * FROM app.claim_jobs(50)"))
+                        jobs = list(claimed.mappings())
+                        connection.commit()
+                        for job in jobs:
+                            queue = (
+                                "ai"
+                                if job["kind"] in ("assistant", "telegram_voice")
+                                else "delivery"
+                            )
+                            celery_app.send_task(
+                                "aion.jobs.execute",
+                                args=[str(job["id"]), str(job["user_id"]), str(job["lease_token"])],
+                                queue=queue,
+                                retry=False,
+                            )
                         stopped.wait(settings.scheduler_interval_seconds)
                 finally:
                     connection.rollback()

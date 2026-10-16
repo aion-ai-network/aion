@@ -6,6 +6,7 @@ const system = useSystemStore()
 const components: Record<string, string> = {
   database: 'База данных', schema: 'Схема данных', redis: 'Очередь',
   scheduler: 'Планировщик', worker: 'Фоновая обработка',
+  worker_ai: 'Очередь ассистента', worker_delivery: 'Доставка и экспорт',
 }
 const labels: Record<CheckState, string> = {
   up: 'Доступно', down: 'Недоступно', starting: 'Ожидаем запуск', unknown: 'Не проверено',

@@ -2,17 +2,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import Connection, create_engine
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import Connection, create_engine, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from aion.db.models import ServiceHeartbeat
 from aion.settings import Settings
 
 
 def async_engine(settings: Settings) -> AsyncEngine:
     return create_async_engine(
         settings.database_url,
+        hide_parameters=True,
         pool_pre_ping=True,
         pool_timeout=settings.dependency_timeout_seconds,
         connect_args={"connect_timeout": int(settings.dependency_timeout_seconds) + 1},
@@ -23,6 +22,7 @@ def async_engine(settings: Settings) -> AsyncEngine:
 def sync_connection(settings: Settings) -> Iterator[Connection]:
     engine = create_engine(
         settings.database_url,
+        hide_parameters=True,
         pool_pre_ping=True,
         connect_args={"connect_timeout": int(settings.dependency_timeout_seconds) + 1},
     )
@@ -34,13 +34,12 @@ def sync_connection(settings: Settings) -> Iterator[Connection]:
 
 
 def record_heartbeat(connection: Connection, component: str, instance_id: str) -> None:
-    statement = insert(ServiceHeartbeat).values(
-        component=component, instance_id=instance_id, observed_at=datetime.now(UTC)
-    )
     connection.execute(
-        statement.on_conflict_do_update(
-            index_elements=[ServiceHeartbeat.component],
-            set_={"instance_id": statement.excluded.instance_id,
-                  "observed_at": statement.excluded.observed_at},
-        )
+        text("""
+            INSERT INTO app.service_heartbeats (component, instance_id, observed_at)
+            VALUES (:component, :instance_id, :observed_at)
+            ON CONFLICT (component) DO UPDATE
+              SET instance_id = EXCLUDED.instance_id, observed_at = EXCLUDED.observed_at
+        """),
+        {"component": component, "instance_id": instance_id, "observed_at": datetime.now(UTC)},
     )

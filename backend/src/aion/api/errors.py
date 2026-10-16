@@ -34,6 +34,7 @@ def install_errors(app: FastAPI) -> None:
         request.state.request_id = incoming if REQUEST_ID.fullmatch(incoming) else uuid4().hex
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
+        response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.exception_handler(HTTPException)

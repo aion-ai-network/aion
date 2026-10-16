@@ -6,11 +6,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from redis.asyncio import Redis
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from aion import __version__
-from aion.db.models import ServiceHeartbeat
 from aion.settings import Settings
 
 router = APIRouter(tags=["system"])
@@ -28,12 +27,18 @@ class SystemStatus(BaseModel):
     checks: dict[str, Check]
 
 
-async def collect_health(
-    engine: AsyncEngine, redis: Redis, settings: Settings
-) -> SystemStatus:
+async def collect_health(engine: AsyncEngine, redis: Redis, settings: Settings) -> SystemStatus:
     checks = {
         name: Check(status="unknown")
-        for name in ("database", "schema", "redis", "scheduler", "worker")
+        for name in (
+            "database",
+            "schema",
+            "redis",
+            "scheduler",
+            "worker",
+            "worker_ai",
+            "worker_delivery",
+        )
     }
 
     async def check_database() -> None:
@@ -44,19 +49,25 @@ async def collect_health(
                     checks["database"] = Check(status="up")
                     checks["schema"] = Check(status="down")
                     rows = await connection.execute(
-                        select(ServiceHeartbeat.component, ServiceHeartbeat.observed_at)
+                        text("SELECT component, observed_at FROM app.service_heartbeats")
+                    )
+                    await connection.execute(text("SELECT user_id FROM app.user_profiles LIMIT 0"))
+                    await connection.execute(text("SELECT id FROM app.assistant_runs LIMIT 0"))
+                    await connection.execute(
+                        text("SELECT receiving_at FROM app.attachments LIMIT 0")
                     )
                     checks["schema"] = Check(status="up")
                     observed = {component: timestamp for component, timestamp in rows}
                     now = datetime.now(UTC)
-                    for component in ("scheduler", "worker"):
+                    for component in ("scheduler", "worker", "worker_ai", "worker_delivery"):
                         last_seen = observed.get(component)
                         if last_seen is None:
                             checks[component] = Check(status="starting")
                         else:
                             age = (now - last_seen).total_seconds()
                             checks[component] = Check(
-                                status="up" if 0 <= age <= settings.heartbeat_max_age_seconds
+                                status="up"
+                                if 0 <= age <= settings.heartbeat_max_age_seconds
                                 else "down"
                             )
         except Exception:
@@ -75,7 +86,11 @@ async def collect_health(
     ready = all(checks[name].status == "up" for name in ("database", "schema", "redis"))
     return SystemStatus(
         ready=ready,
-        operational=ready and all(checks[name].status == "up" for name in ("scheduler", "worker")),
+        operational=ready
+        and all(
+            checks[name].status == "up"
+            for name in ("scheduler", "worker", "worker_ai", "worker_delivery")
+        ),
         checks=checks,
     )
 
